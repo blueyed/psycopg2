@@ -76,6 +76,47 @@ strip_severity(const char *msg)
         return msg;
 }
 
+/* Return a Python exception from a SQLSTATE from psycopg2.errors */
+BORROWED static PyObject *
+exception_from_module(const char *sqlstate)
+{
+    PyObject *rv = NULL;
+    PyObject *m = NULL;
+    PyObject *map = NULL;
+
+    if (!(m = PyImport_ImportModule("psycopg2.errors"))) { goto exit; }
+    if (!(map = PyObject_GetAttrString(m, "_by_sqlstate"))) { goto exit; }
+    if (!PyDict_Check(map)) {
+        Dprintf("'psycopg2.errors._by_sqlstate' is not a dict!");
+        goto exit;
+    }
+
+    if ((rv = PyDict_GetItemString(map, sqlstate))) {
+        /* we found the sqlstate class (borrowed reference) */
+        goto exit;
+    }
+    else {
+        /* try and fall back on the class */
+        char sqlclass[3];
+        sqlclass[0] = sqlstate[0];
+        sqlclass[1] = sqlstate[1];
+        sqlclass[2] = '\0';
+
+        /* borrowed reference */
+        rv = PyDict_GetItemString(map, sqlclass);
+    }
+
+exit:
+    /* We exit with a borrowed object, or a NULL but no error
+     * If an error did happen in this function, we don't want to clobber the
+     * database error. So better reporting it, albeit with the wrong class. */
+    PyErr_Clear();
+
+    Py_XDECREF(map);
+    Py_XDECREF(m);
+    return rv;
+}
+
 /* Returns the Python exception corresponding to an SQLSTATE error
    code.  A list of error codes can be found at:
 
@@ -83,6 +124,18 @@ strip_severity(const char *msg)
 BORROWED static PyObject *
 exception_from_sqlstate(const char *sqlstate)
 {
+    PyObject *exc;
+
+    /* First look up an exception of the proper class from the Python module */
+    exc = exception_from_module(sqlstate);
+    if (exc) {
+        Py_DECREF(exc);     /* because we are borrowing it */
+        return exc;
+    }
+    else {
+        PyErr_Clear();
+    }
+
     switch (sqlstate[0]) {
     case '0':
         switch (sqlstate[1]) {

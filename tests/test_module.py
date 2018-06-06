@@ -304,6 +304,32 @@ class ExceptionsTestCase(ConnectingTestCase):
         self.assertEqual(e.pgcode, e1.pgcode)
         self.assert_(e1.cursor is None)
 
+    def test_exception_class(self):
+        cur = self.conn.cursor()
+        try:
+            cur.execute("select * from nonexist")
+        except psycopg2.Error as exc:
+            e = exc
+
+        from psycopg2.errors import UndefinedColumn
+        self.assert_(isinstance(e, UndefinedColumn))
+        self.assert_(isinstance(e, self.conn.ProgrammingError))
+
+    def test_exception_class_fallback(self):
+        cur = self.conn.cursor()
+
+        from psycopg2 import errors
+        x = errors._by_sqlstate.pop('42P01')
+        try:
+            cur.execute("select * from nonexist")
+        except psycopg2.Error as exc:
+            e = exc
+        finally:
+            errors._by_sqlstate['42P01'] = x
+
+        self.assert_(isinstance(e, errors.ClassSyntaxErrorOrAccessRuleViolation))
+        self.assert_(isinstance(e, self.conn.ProgrammingError))
+
 
 class TestExtensionModule(unittest.TestCase):
     @slow
